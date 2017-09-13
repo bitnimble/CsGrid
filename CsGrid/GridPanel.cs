@@ -12,6 +12,7 @@ namespace CsGrid
 	{
 		Fraction,
 		Pixels,
+		Percent,
 		Auto
 	}
 
@@ -52,9 +53,13 @@ namespace CsGrid
 		//Row and column lengths, in pixels
 		float[] rowPixels;
 		float[] columnPixels;
+		float totalRowFractions;
+		float totalColumnFractions;
 
 		float[] cumulRowPixels;
 		float[] cumulColumnPixels;
+
+		public bool RenderInvalidControls { get; set; } = false;
 
 		Dictionary<string, GridArea> gridAreas = new Dictionary<string, GridArea>();
 
@@ -67,6 +72,60 @@ namespace CsGrid
 		{
 			columns = columnLengths;
 			RecalculateGrid();
+		}
+
+		public void SetColumns(string columnsString)
+		{
+			string[] parts = columnsString.Split(new char[0], StringSplitOptions.RemoveEmptyEntries);
+			GridLength[] lengths = new GridLength[parts.Length];
+			for (int i = 0; i < parts.Length; i++)
+				lengths[i] = ParseGridLength(parts[i]);
+			columns = lengths;
+		}
+
+		public void SetRows(string rowsString)
+		{
+			string[] parts = rowsString.Split(new char[0], StringSplitOptions.RemoveEmptyEntries);
+			GridLength[] lengths = new GridLength[parts.Length];
+			for (int i = 0; i < parts.Length; i++)
+				lengths[i] = ParseGridLength(parts[i]);
+			rows = lengths;
+		}
+
+		private GridLength ParseGridLength(string s)
+		{
+			s = s.Trim();
+			GridLength gl = null;
+			bool success;
+
+			if (s.EndsWith("px"))
+			{
+				success = int.TryParse(s.Substring(0, s.Length - 2), out int pixels);
+				gl = new GridLength(GridUnit.Pixels, pixels);
+			}
+			else if (s.EndsWith("fr"))
+			{
+				success = float.TryParse(s.Substring(0, s.Length - 2), out float fractions);
+				gl = new GridLength(GridUnit.Fraction, fractions);
+			}
+			else if (s.EndsWith("%"))
+			{
+				success = float.TryParse(s.Substring(0, s.Length - 1), out float percent);
+				gl = new GridLength(GridUnit.Percent, percent);
+			}
+			else if (s == "auto")
+			{
+				success = true;
+				gl = new GridLength(GridUnit.Auto, 0);
+			}
+			else
+			{
+				success = false;
+			}
+
+			if (!success)
+				throw new Exception("Invalid grid length string '" + s + "'");
+			return gl;
 		}
 
 		public void SetRows(params GridLength[] rowLengths)
@@ -206,27 +265,27 @@ namespace CsGrid
 		private (int start, int end) ParseGridAreaString(string s)
 		{
 			int start, end;
-			bool error = false;
+			bool success = false;
 			if (s.Contains("/"))
 			{
 				string[] parts = s.Split('/');
 				if (parts.Length != 2)
 					throw new Exception("Invalid grid area string - more than 2 parts found.");
 
-				error = int.TryParse(parts[0].Trim(), out start);
+				success = int.TryParse(parts[0].Trim(), out start);
 				if (parts[1].Contains("span"))
-					error = int.TryParse(parts[1].Trim().Substring(5), out end);
+					success = int.TryParse(parts[1].Trim().Substring(5), out end);
 				else
-					error = int.TryParse(parts[1].Trim(), out end);
+					success = int.TryParse(parts[1].Trim(), out end);
 
 			}
 			else
 			{
-				error = int.TryParse(s.Trim(), out start);
+				success = int.TryParse(s.Trim(), out start);
 				end = start + 1;
 			}
 
-			if (error)
+			if (!success)
 				throw new Exception("Invalid grid area string.");
 
 			return (start, end);
@@ -241,8 +300,11 @@ namespace CsGrid
 				cumulColumnPixels = new float[columns.Length];
 				cumulRowPixels = new float[rows.Length];
 
-				RecalculateAxis(columns, columnPixels, ClientRectangle.Width);
-				RecalculateAxis(rows, rowPixels, ClientRectangle.Height);
+				totalColumnFractions = columns.Sum(gl => gl.Unit == GridUnit.Fraction ? gl.Length : 0);
+				totalRowFractions = rows.Sum(gl => gl.Unit == GridUnit.Fraction ? gl.Length : 0);
+
+				RecalculateAxis(columns, columnPixels, ClientRectangle.Width, totalColumnFractions);
+				RecalculateAxis(rows, rowPixels, ClientRectangle.Height, totalRowFractions);
 				CalculateCumulativeAxis(columnPixels, cumulColumnPixels);
 				CalculateCumulativeAxis(rowPixels, cumulRowPixels);
 
@@ -262,7 +324,7 @@ namespace CsGrid
 			}
 		}
 
-		private void RecalculateAxis(GridLength[] lengths, float[] pixelLengths, float completeLength)
+		private void RecalculateAxis(GridLength[] lengths, float[] pixelLengths, float completeLength, float totalFractions)
 		{
 			float totalLength = 0;
 			int autoCount = 0;
@@ -274,8 +336,8 @@ namespace CsGrid
 
 				if (gl.Unit == GridUnit.Pixels)
 					pixelValue = gl.Length;
-				else if (gl.Unit == GridUnit.Fraction)
-					pixelValue = completeLength * gl.Length;
+				else if (gl.Unit == GridUnit.Percent)
+					pixelValue = completeLength * (gl.Length / 100);
 				else
 					autoCount++;
 
@@ -284,7 +346,21 @@ namespace CsGrid
 			}
 
 			float remainingLength = completeLength - totalLength;
-			float autoLength = remainingLength / (autoCount == 0 ? 1 : autoCount);
+			float afterFractionsLength = remainingLength;
+
+			//Go back and assign fractional lengths now
+			for (int i = 0; i < lengths.Length; i++)
+			{
+				GridLength gl = lengths[i];
+				if (gl.Unit == GridUnit.Fraction)
+				{
+					float length = remainingLength * (gl.Length / totalFractions);
+					pixelLengths[i] = length;
+					afterFractionsLength -= length;
+				}
+			}
+
+			float autoLength = afterFractionsLength / (autoCount == 0 ? 1 : autoCount);
 
 			//Go back and assign auto values now
 			for (int i = 0; i < lengths.Length; i++)
@@ -312,10 +388,26 @@ namespace CsGrid
 				{
 					string areaName = gridMeta as string;
 					if (string.IsNullOrWhiteSpace(areaName))
+					{
+						if (!RenderInvalidControls)
+						{
+							c.Width = 0;
+							c.Height = 0;
+							c.Location = Point.Empty;
+						}
 						continue;
+					}
 
 					if (!gridAreas.ContainsKey(areaName))
+					{
+						if (!RenderInvalidControls)
+						{
+							c.Width = 0;
+							c.Height = 0;
+							c.Location = Point.Empty;
+						}
 						continue;
+					}
 
 					GridArea area = gridAreas[areaName];
 					float top = area.RowStart == 0 ? 0 : cumulRowPixels[area.RowStart - 1];
