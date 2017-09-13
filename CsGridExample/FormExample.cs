@@ -17,13 +17,12 @@ namespace CsGridExample
 		{
 			InitializeComponent();
 
-			gridPanel1.SetColumns(new GridLength(GridUnit.Pixels, 300), new GridLength(GridUnit.Auto, 0));
-			gridPanel1.SetRows(new GridLength(GridUnit.Pixels, 54), new GridLength(GridUnit.Auto, 0), new GridLength(GridUnit.Pixels, 50));
+			gridPanel1.SetColumns("200px auto 2fr auto auto");
+			gridPanel1.SetRows("30px auto auto");
 
-			gridPanel1.DefineAreas(@".    title
-									 info body
-									 .    footer
-									");
+			gridPanel1.DefineAreas(@"header header right1 right1 right2
+										body . . . .
+										body . . . .");
 		}
 	}
 }
