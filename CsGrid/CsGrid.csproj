@@ -46,7 +46,7 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="GridHelper.cs" />
-    <Compile Include="GridForm.cs" />
+    <Compile Include="GridPanel.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>
   <ItemGroup>
